@@ -1,0 +1,6 @@
+
+{
+  "name": "EduBoost AI",
+  "description": "Une plateforme d'apprentissage intelligente qui transforme vos contenus en résumés, podcasts audio et flashcards interactives pour une mémorisation optimale.",
+  "requestFramePermissions": ["microphone"]
+}
