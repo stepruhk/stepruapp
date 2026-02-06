@@ -40,6 +40,9 @@ OpenAI calls are now proxied through a local Node server so your API key stays s
   - `POST /api/summarize`
   - `POST /api/flashcards`
   - `POST /api/podcast`
+- Shared data endpoints (notes/contenu):
+  - `GET/POST/DELETE /api/notes`
+  - `GET/POST/DELETE /api/resources`
 - The browser never reads the OpenAI key.
 - API hardening included:
   - per-IP rate limiting

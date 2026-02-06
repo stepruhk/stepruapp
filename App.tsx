@@ -2,27 +2,27 @@
 import React, { useEffect, useState } from 'react';
 import { Topic, AppView, StudySession } from './types.ts';
 import { INITIAL_TOPICS } from './constants.ts';
-import { checkAuthStatus, generateFlashcards, generatePodcastAudio, loginWithPassword, logout, summarizeContent, type UserRole } from './services/openaiService.ts';
+import {
+  checkAuthStatus,
+  createCourseContent,
+  createEvernoteNote,
+  generateFlashcards,
+  generatePodcastAudio,
+  listCourseContent,
+  listEvernoteNotes,
+  loginWithPassword,
+  logout,
+  removeCourseContent,
+  removeEvernoteNote,
+  summarizeContent,
+  type EvernoteNote,
+  type LearningContentItem,
+  type UserRole,
+} from './services/openaiService.ts';
 import FlashcardDeck from './components/FlashcardDeck.tsx';
 import PodcastPlayer from './components/PodcastPlayer.tsx';
 
 type MenuSection = 'ACCUEIL' | 'CONTENU' | 'NOTES' | 'MEMO' | 'BALADO' | 'ASSISTANT';
-type EvernoteNote = {
-  id: string;
-  courseId: string;
-  title: string;
-  content: string;
-  link?: string;
-  createdAt: string;
-};
-type LearningContentItem = {
-  id: string;
-  courseId: string;
-  type: 'PDF' | 'LIEN';
-  title: string;
-  url: string;
-  createdAt: string;
-};
 
 const App: React.FC = () => {
   const visibleTopics = INITIAL_TOPICS.filter((topic) => topic.id !== '4');
@@ -70,54 +70,28 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    const raw = localStorage.getItem('eduboost_evernote_notes');
-    if (!raw) return;
-    try {
-      const parsed = JSON.parse(raw) as Array<EvernoteNote | Omit<EvernoteNote, 'courseId'>>;
-      if (Array.isArray(parsed)) {
-        setEvernoteNotes(
-          parsed.map((item) => ({
-            ...item,
-            courseId: 'courseId' in item && item.courseId ? item.courseId : (visibleTopics[0]?.id || ''),
-          })),
-        );
-      }
-    } catch (_error) {
-      setEvernoteNotes([]);
-    }
-  }, []);
-
-  useEffect(() => {
-    localStorage.setItem('eduboost_evernote_notes', JSON.stringify(evernoteNotes));
-  }, [evernoteNotes]);
-
-  useEffect(() => {
-    const raw = localStorage.getItem('eduboost_content_items');
-    if (!raw) return;
-    try {
-      const parsed = JSON.parse(raw) as Array<LearningContentItem | Omit<LearningContentItem, 'courseId'>>;
-      if (Array.isArray(parsed)) {
-        setContentItems(
-          parsed.map((item) => ({
-            ...item,
-            courseId: 'courseId' in item && item.courseId ? item.courseId : (visibleTopics[0]?.id || ''),
-          })),
-        );
-      }
-    } catch (_error) {
-      setContentItems([]);
-    }
-  }, []);
-
-  useEffect(() => {
-    localStorage.setItem('eduboost_content_items', JSON.stringify(contentItems));
-  }, [contentItems]);
-
-  useEffect(() => {
     if (!visibleTopics.some((topic) => topic.id === resourceCourseId)) {
       setResourceCourseId(visibleTopics[0]?.id || '');
     }
   }, [resourceCourseId, visibleTopics]);
+
+  useEffect(() => {
+    const loadCourseResources = async () => {
+      if (!authChecked || !isAuthenticated || !resourceCourseId) return;
+      try {
+        const [notes, resources] = await Promise.all([
+          listEvernoteNotes(resourceCourseId),
+          listCourseContent(resourceCourseId),
+        ]);
+        setEvernoteNotes(notes);
+        setContentItems(resources);
+      } catch (error) {
+        console.error(error);
+      }
+    };
+
+    void loadCourseResources();
+  }, [authChecked, isAuthenticated, resourceCourseId]);
 
   const handleAuthError = (error: unknown) => {
     console.error(error);
@@ -222,7 +196,7 @@ const App: React.FC = () => {
   ];
   const canEditResources = userRole === 'professor';
 
-  const addEvernoteNote = (event: React.FormEvent) => {
+  const addEvernoteNote = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!resourceCourseId) return;
     const title = noteTitle.trim();
@@ -235,26 +209,34 @@ const App: React.FC = () => {
       : '';
     if (!title || (!content && !link)) return;
 
-    const newNote: EvernoteNote = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      courseId: resourceCourseId,
-      title,
-      content,
-      link: link || undefined,
-      createdAt: new Date().toISOString(),
-    };
-
-    setEvernoteNotes((prev) => [newNote, ...prev]);
-    setNoteTitle('');
-    setNoteContent('');
-    setNoteLink('');
+    try {
+      const newNote = await createEvernoteNote({
+        courseId: resourceCourseId,
+        title,
+        content,
+        link: link || undefined,
+      });
+      setEvernoteNotes((prev) => [newNote, ...prev]);
+      setNoteTitle('');
+      setNoteContent('');
+      setNoteLink('');
+    } catch (error) {
+      console.error(error);
+      alert("Impossible d'ajouter la note.");
+    }
   };
 
-  const deleteEvernoteNote = (id: string) => {
-    setEvernoteNotes((prev) => prev.filter((note) => note.id !== id));
+  const deleteEvernoteNote = async (id: string) => {
+    try {
+      await removeEvernoteNote(id);
+      setEvernoteNotes((prev) => prev.filter((note) => note.id !== id));
+    } catch (error) {
+      console.error(error);
+      alert("Impossible de supprimer la note.");
+    }
   };
 
-  const addContentLink = (event: React.FormEvent) => {
+  const addContentLink = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!resourceCourseId) return;
     const title = contentTitle.trim();
@@ -264,17 +246,20 @@ const App: React.FC = () => {
       ? rawUrl
       : `https://${rawUrl}`;
 
-    const item: LearningContentItem = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      courseId: resourceCourseId,
-      type: 'LIEN',
-      title,
-      url: normalizedUrl,
-      createdAt: new Date().toISOString(),
-    };
-    setContentItems((prev) => [item, ...prev]);
-    setContentTitle('');
-    setContentUrl('');
+    try {
+      const item = await createCourseContent({
+        courseId: resourceCourseId,
+        type: 'LIEN',
+        title,
+        url: normalizedUrl,
+      });
+      setContentItems((prev) => [item, ...prev]);
+      setContentTitle('');
+      setContentUrl('');
+    } catch (error) {
+      console.error(error);
+      alert("Impossible d'ajouter le lien.");
+    }
   };
 
   const fileToDataUrl = (file: File) =>
@@ -297,14 +282,12 @@ const App: React.FC = () => {
     setUploadingPdf(true);
     try {
       const dataUrl = await fileToDataUrl(file);
-      const item: LearningContentItem = {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      const item = await createCourseContent({
         courseId: resourceCourseId,
         type: 'PDF',
         title,
         url: dataUrl,
-        createdAt: new Date().toISOString(),
-      };
+      });
       setContentItems((prev) => [item, ...prev]);
       setPdfTitle('');
       if (fileInput) fileInput.value = '';
@@ -315,8 +298,14 @@ const App: React.FC = () => {
     }
   };
 
-  const deleteContentItem = (id: string) => {
-    setContentItems((prev) => prev.filter((item) => item.id !== id));
+  const deleteContentItem = async (id: string) => {
+    try {
+      await removeCourseContent(id);
+      setContentItems((prev) => prev.filter((item) => item.id !== id));
+    } catch (error) {
+      console.error(error);
+      alert("Impossible de supprimer ce contenu.");
+    }
   };
 
   const openContentItem = async (item: LearningContentItem) => {
